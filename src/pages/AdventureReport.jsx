@@ -69,15 +69,17 @@ export default function AdventureReport() {
             setMemberData(member);
           }
 
-          // Fetch today's plan same as Home: always get latest plan when in taster mode
-          const { data: plans } = await supabase
+          // Fetch today's plan: filter by date (format YYYY-MM-DD)
+          const today = new Date();
+          const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+          const { data: planRow } = await supabase
             .from('plans_taster')
             .select('*')
-            .order('date', { ascending: false })
-            .limit(1);
+            .eq('date', todayStr)
+            .maybeSingle();
 
-          if (plans && plans.length > 0) {
-            setPlanData(plans[0]);
+          if (planRow) {
+            setPlanData(planRow);
           }
         }
       } catch (err) {
@@ -163,6 +165,7 @@ ${formData.resourcesChecked ? '*Resources:* ✅' : '*Resources:* ❌'}
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    if (!planData) return;
     setLoading(true);
     try {
       if (memberData && planData) {
@@ -496,7 +499,30 @@ ${formData.resourcesChecked ? '*Resources:* ✅' : '*Resources:* ❌'}
           </div>
         </div>
 
-        <button type="submit" className="btn btn-primary" disabled={loading} style={{ width: '100%', padding: '16px', borderRadius: '16px', fontSize: '16px', fontWeight: 'bold', marginTop: '10px', boxShadow: '0 8px 16px rgba(125,17,17,0.2)' }}>
+        {!planData && (
+          <div style={{ padding: '14px 16px', backgroundColor: 'rgba(255, 89, 99, 0.1)', borderRadius: '12px', border: '1px solid rgba(255, 89, 99, 0.25)', marginTop: '10px' }}>
+            <p style={{ margin: 0, fontSize: '14px', color: 'var(--text-primary)', fontWeight: '500' }}>
+              No plan for today. Report submission is disabled until a plan is available for this date.
+            </p>
+          </div>
+        )}
+
+        <button
+          type="submit"
+          className="btn btn-primary"
+          disabled={loading || !planData}
+          style={{
+            width: '100%',
+            padding: '16px',
+            borderRadius: '16px',
+            fontSize: '16px',
+            fontWeight: 'bold',
+            marginTop: '10px',
+            boxShadow: '0 8px 16px rgba(125,17,17,0.2)',
+            opacity: planData ? 1 : 0.6,
+            cursor: planData ? 'pointer' : 'not-allowed',
+          }}
+        >
           {loading ? 'Submitting...' : 'Submit Report'}
         </button>
       </form>

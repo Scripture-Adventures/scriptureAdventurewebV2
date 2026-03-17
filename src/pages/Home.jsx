@@ -78,16 +78,24 @@ export default function Home() {
           }
         }
 
-        // Fetch today's plan
-        const planStoreName = isTaster ? 'plans_taster' : 'plans_main_adventure';
-        const { data: plans } = await supabase
-          .from(planStoreName)
-          .select('*')
-          .order('date', { ascending: false })
-          .limit(1);
+        // Fetch today's plan: for taster filter by date (YYYY-MM-DD); for main use latest
+        const today = new Date();
+        const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
 
-        if (plans && plans.length > 0) {
-          setPlanData(plans[0]);
+        if (isTaster) {
+          const { data: planRow } = await supabase
+            .from('plans_taster')
+            .select('*')
+            .eq('date', todayStr)
+            .maybeSingle();
+          if (planRow) setPlanData(planRow);
+        } else {
+          const { data: plans } = await supabase
+            .from('plans_main_adventure')
+            .select('*')
+            .order('date', { ascending: false })
+            .limit(1);
+          if (plans && plans.length > 0) setPlanData(plans[0]);
         }
       } catch (error) {
         console.error("Error fetching data:", error);
