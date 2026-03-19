@@ -42,7 +42,7 @@ export default function Onboarding() {
     async function fetchCohorts() {
       const { data } = await supabase
         .from('current_cohort')
-        .select('id, nomenclature, taster_session_on, taster_group_link');
+        .select('id, nomenclature, taster_session_on, taster_group_link, sermon_link, taster_start_date, start_date');
       if (data) {
         setCohorts(data);
         setTasterCohorts(data.filter(c => c.taster_session_on === true));

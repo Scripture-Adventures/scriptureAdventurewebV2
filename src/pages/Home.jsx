@@ -22,6 +22,17 @@ const getFormattedDate = () => {
 const getFirst = (obj) => obj && (obj.firstname ?? obj.first_name ?? obj.firstName ?? obj.Firstname ?? '');
 const getLast = (obj) => obj && (obj.lastname ?? obj.last_name ?? obj.lastName ?? obj.Lastname ?? '');
 
+const getDayCountFromStartDate = (startDateValue) => {
+  if (!startDateValue) return null;
+  const start = new Date(startDateValue);
+  if (Number.isNaN(start.getTime())) return null;
+  const now = new Date();
+  // Day count is difference in full days (e.g. 15th -> 19th = 4)
+  const diffMs = now.getTime() - start.getTime();
+  const days = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+  return days >= 0 ? days : 0;
+};
+
 export default function Home() {
   const [memberData, setMemberData] = useState(null);
   const [planData, setPlanData] = useState(null);
@@ -146,7 +157,13 @@ export default function Home() {
           <>
             <h3 style={{ fontSize: '18px', color: 'var(--text-secondary)' }}>Taster</h3>
             <p className="text-muted" style={{ fontSize: '14px', marginTop: '5px' }}>
-              {getFormattedDate()} ( {memberData?.tasterStartDate ? 'Active' : 'Started'} )
+              {(() => {
+                const dayCount = getDayCountFromStartDate(
+                  // Prefer cohort taster start date
+                  currentCohort?.taster_start_date || currentCohort?.tasterStartDate
+                );
+                return `${getFormattedDate()} ( Day ${dayCount ?? '—'} )`;
+              })()}
             </p>
           </>
         ) : (
@@ -272,7 +289,24 @@ export default function Home() {
               </div>
               <ChevronRight color="var(--primary)" size={20} />
             </button>
-
+            
+            {/* Sermon Link (must come before Submit Sermon Report) */}
+            { (currentCohort?.sermonlink || currentCohort?.sermon_link || currentCohort?.sermonLink) && (
+              <button 
+                onClick={() => window.open(currentCohort?.sermonlink || currentCohort?.sermon_link || currentCohort?.sermonLink, '_blank')}
+                className="glass-card" 
+                style={{ marginTop: '8px', padding: '16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', border: 'none', borderRadius: '16px', background: 'linear-gradient(145deg, var(--primary) 0%, var(--primary-dark) 100%)', boxShadow: '0 8px 15px rgba(125,17,17,0.2)' }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+                  <div style={{ backgroundColor: 'rgba(255,255,255,0.2)', padding: '10px', borderRadius: '12px' }}>
+                    <ExternalLink color="white" size={24} />
+                  </div>
+                  <span style={{ fontSize: '16px', fontWeight: '700', color: 'white' }}>Get Taster Sermon Link</span>
+                </div>
+                <ChevronRight color="white" size={20} />
+              </button>
+            )}
+            
             {/* Submit Sermon Report */}
             <button 
               onClick={() => navigate('/sermon-report')}
@@ -287,23 +321,6 @@ export default function Home() {
               </div>
               <ChevronRight color="var(--secondary)" size={20} />
             </button>
-            
-            {/* Sermon Link */}
-            {currentCohort?.sermonlink && (
-              <button 
-                onClick={() => window.open(currentCohort.sermonlink, '_blank')}
-                className="glass-card" 
-                style={{ marginTop: '8px', padding: '16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', border: 'none', borderRadius: '16px', background: 'linear-gradient(145deg, var(--primary) 0%, var(--primary-dark) 100%)', boxShadow: '0 8px 15px rgba(125,17,17,0.2)' }}
-              >
-                <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
-                  <div style={{ backgroundColor: 'rgba(255,255,255,0.2)', padding: '10px', borderRadius: '12px' }}>
-                    <ExternalLink color="white" size={24} />
-                  </div>
-                  <span style={{ fontSize: '16px', fontWeight: '700', color: 'white' }}>Get Taster Sermon Link</span>
-                </div>
-                <ChevronRight color="white" size={20} />
-              </button>
-            )}
 
           </div>
 
