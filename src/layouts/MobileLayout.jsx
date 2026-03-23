@@ -1,10 +1,38 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { Outlet, NavLink } from 'react-router-dom';
 import { Home, History, User, Book, Target } from 'lucide-react';
 import { useAppStore } from '../store/appStore';
+import { supabase } from '../lib/supabase';
+import { verifyMainMemberForCohort, isDevTestMainEmail } from '../lib/mainMemberQualification';
 
 export default function MobileLayout() {
   const tasterOnboardingDone = useAppStore((state) => state.tasterOnboardingDone);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function guardMainMember() {
+      if (tasterOnboardingDone) return;
+
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user?.email || cancelled) return;
+      if (isDevTestMainEmail(user.email)) return;
+
+      const cohortId = useAppStore.getState().currentCohortId;
+      const check = await verifyMainMemberForCohort(supabase, user.email, cohortId);
+      if (cancelled) return;
+      if (check.ok) return;
+
+      sessionStorage.setItem('sa_main_not_qualified', check.reason);
+      await supabase.auth.signOut();
+      useAppStore.getState().setLoggedIn(false);
+    }
+
+    guardMainMember();
+    return () => {
+      cancelled = true;
+    };
+  }, [tasterOnboardingDone]);
 
   return (
     <div className="mobile-wrapper">

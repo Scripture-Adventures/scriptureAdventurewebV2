@@ -14,7 +14,7 @@ export default function Support() {
     e.preventDefault();
     if (!formData.subject || !formData.body) return;
     
-    const mailto = `mailto:scriptureadventures.app@gmail.com?subject=${encodeURIComponent(formData.subject)}&body=${encodeURIComponent(formData.body)}`;
+    const mailto = `mailto:scripture.adventure@gmail.com?subject=${encodeURIComponent(formData.subject)}&body=${encodeURIComponent(formData.body)}`;
     window.location.href = mailto;
     
     // Slight delay before going back just in case

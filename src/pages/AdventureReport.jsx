@@ -7,6 +7,7 @@ import { ArrowLeft, Clock, MessageCircle, Heart, CheckCircle, FileText, Link as 
 export default function AdventureReport() {
   const navigate = useNavigate();
   const { tasterEmail, tasterOnboardingDone, currentCohort, currentCohortId, tasterDetails } = useAppStore();
+  const isTaster = tasterOnboardingDone;
   const [loading, setLoading] = useState(false);
   const [fetching, setFetching] = useState(true);
   const [success, setSuccess] = useState(false);
@@ -38,7 +39,12 @@ export default function AdventureReport() {
         const { data: { user } } = await supabase.auth.getUser();
         const email = user?.email || tasterEmail;
 
-        if (email && tasterOnboardingDone) {
+        const today = new Date();
+        const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+
+        if (isTaster) {
+          if (!email) return;
+
           // Fetch member (for form submission and memberData), being careful with multiple cohorts
           const cohortId = currentCohortId || currentCohort?.id;
           let member = null;
@@ -69,11 +75,31 @@ export default function AdventureReport() {
             setMemberData(member);
           }
 
-          // Fetch today's plan: filter by date (format YYYY-MM-DD)
-          const today = new Date();
-          const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
           const { data: planRow } = await supabase
             .from('plans_taster')
+            .select('*')
+            .eq('date', todayStr)
+            .maybeSingle();
+
+          if (planRow) {
+            setPlanData(planRow);
+          }
+        } else {
+          // Main adventure: auth user + main_members row + today's plans_main_adventure
+          if (!user?.email) return;
+
+          const { data: mm, error: mmErr } = await supabase
+            .from('main_members')
+            .select('*')
+            .eq('email', user.email)
+            .maybeSingle();
+          if (mmErr) {
+            console.error('Error fetching main_members:', mmErr);
+          }
+          if (mm) setMemberData(mm);
+
+          const { data: planRow } = await supabase
+            .from('plans_main_adventure')
             .select('*')
             .eq('date', todayStr)
             .maybeSingle();
@@ -88,9 +114,9 @@ export default function AdventureReport() {
         setFetching(false);
       }
     };
-    
+
     fetchInitialData();
-  }, [tasterEmail, tasterOnboardingDone, currentCohortId, currentCohort]);
+  }, [tasterEmail, isTaster, currentCohortId, currentCohort]);
 
   const handleChange = (e) => {
     const { name, value, type, checked } = e.target;
@@ -132,6 +158,7 @@ export default function AdventureReport() {
     const saNumber =
       memberData?.satnumber ||
       memberData?.sa_number ||
+      memberData?.sanumber ||
       tasterDetails?.satnumber ||
       tasterDetails?.sa_number ||
       '';
@@ -163,17 +190,55 @@ ${formData.resourcesChecked ? '*Resources:* ✅' : '*Resources:* ❌'}
 `;
   };
 
+  const submitPlanGoogleForm = (saNum) => {
+    try {
+      const googleFormData = new URLSearchParams();
+      const today = new Date();
+      const formattedDate = `${today.getDate().toString().padStart(2, '0')}/${(today.getMonth() + 1).toString().padStart(2, '0')}/${today.getFullYear()}`;
+      const dayOrNight = getMeditationHours();
+
+      googleFormData.append('entry.1581596874', formattedDate);
+      googleFormData.append('entry.639640256', saNum || '');
+
+      if (dayOrNight === 'D') {
+        googleFormData.append('entry.1635214566', formData.meditation);
+        googleFormData.append('entry.873247309', '');
+      } else {
+        googleFormData.append('entry.1635214566', '');
+        googleFormData.append('entry.873247309', formData.meditation);
+      }
+
+      googleFormData.append('entry.2006588546', `${formData.paulinePrayer1Start} - ${formData.paulinePrayer1End}`);
+      googleFormData.append('entry.394922426', (formData.paulinePrayer2Start && formData.paulinePrayer2End) ? `${formData.paulinePrayer2Start} - ${formData.paulinePrayer2End}` : ' ');
+      googleFormData.append('entry.547836724', formData.actionPlan);
+
+      fetch('https://docs.google.com/forms/d/e/1FAIpQLSeenGTs8SbEtJQnMNbwrPRs7MvA0yo6d6fbd0ARwb_KF7GgGg/formResponse', {
+        method: 'POST',
+        mode: 'no-cors',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body: googleFormData,
+      }).catch(console.error);
+    } catch (formErr) {
+      console.error('Google Form submission failed', formErr);
+    }
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (!planData) return;
     setLoading(true);
     try {
-      if (memberData && planData) {
-        // Submit report following Flutter logic
+      if (isTaster) {
+        if (!memberData || !planData) {
+          setLoading(false);
+          return;
+        }
         const { error: insertError } = await supabase.from('taster_plan_submissions').insert([{
           pauline1: `${formData.paulinePrayer1Start} - ${formData.paulinePrayer1End}`,
-          pauline2: (formData.paulinePrayer2Start && formData.paulinePrayer2End) 
-                    ? `${formData.paulinePrayer2Start} - ${formData.paulinePrayer2End}` 
+          pauline2: (formData.paulinePrayer2Start && formData.paulinePrayer2End)
+                    ? `${formData.paulinePrayer2Start} - ${formData.paulinePrayer2End}`
                     : ' ',
           action_plan: formData.actionPlan,
           evening_meditation: formData.meditation,
@@ -189,7 +254,6 @@ ${formData.resourcesChecked ? '*Resources:* ✅' : '*Resources:* ❌'}
           throw insertError;
         }
 
-        // Update members submission count
         const { error: updateError } = await supabase.from('taster_members').update({
           total_submission: (memberData.total_submission || 0) + 1
         }).eq('id', memberData.id);
@@ -198,49 +262,66 @@ ${formData.resourcesChecked ? '*Resources:* ✅' : '*Resources:* ❌'}
           throw updateError;
         }
 
-        // Google Form Fallback Tracking (Fire and forget, no-cors to avoid blocking)
-        try {
-          const googleFormData = new URLSearchParams();
-          const today = new Date();
-          const formattedDate = `${today.getDate().toString().padStart(2, '0')}/${(today.getMonth() + 1).toString().padStart(2, '0')}/${today.getFullYear()}`;
-          const dayOrNight = getMeditationHours();
-          
-          googleFormData.append('entry.1581596874', formattedDate);
-          googleFormData.append('entry.639640256', memberData.satnumber || memberData.sa_number || '');
-          
-          if (dayOrNight === 'D') {
-            googleFormData.append('entry.1635214566', formData.meditation); // Morning Meditation
-            googleFormData.append('entry.873247309', ''); // Evening Meditation
-          } else {
-            googleFormData.append('entry.1635214566', ''); // Morning Meditation
-            googleFormData.append('entry.873247309', formData.meditation); // Evening Meditation
-          }
-          
-          googleFormData.append('entry.2006588546', `${formData.paulinePrayer1Start} - ${formData.paulinePrayer1End}`);
-          googleFormData.append('entry.394922426', (formData.paulinePrayer2Start && formData.paulinePrayer2End) ? `${formData.paulinePrayer2Start} - ${formData.paulinePrayer2End}` : ' ');
-          googleFormData.append('entry.547836724', formData.actionPlan);
-
-          fetch('https://docs.google.com/forms/d/e/1FAIpQLSeenGTs8SbEtJQnMNbwrPRs7MvA0yo6d6fbd0ARwb_KF7GgGg/formResponse', {
-            method: 'POST',
-            mode: 'no-cors',
-            headers: {
-              'Content-Type': 'application/x-www-form-urlencoded',
-            },
-            body: googleFormData,
-          }).catch(console.error); // Catch silently to not disrupt UX
-        } catch (formErr) {
-          console.error('Google Form submission failed', formErr);
-        }
+        submitPlanGoogleForm(memberData.satnumber || memberData.sa_number || '');
         try {
           const text = generateClipboardText();
           await navigator.clipboard.writeText(text);
         } catch (clipboardErr) {
           console.error('Failed to copy to clipboard', clipboardErr);
         }
-      } 
-      
+      } else {
+        const { data: { user } } = await supabase.auth.getUser();
+        if (!user) {
+          throw new Error('Not signed in');
+        }
+
+        const cohortRaw = currentCohort?.id ?? currentCohortId;
+        let cohortNumericId = parseInt(String(cohortRaw), 10);
+        if (Number.isNaN(cohortNumericId)) {
+          cohortNumericId = null;
+        }
+
+        const dayOrNight = getMeditationHours();
+        const pauline1 = `${formData.paulinePrayer1Start} - ${formData.paulinePrayer1End}`;
+        const pauline2 = (formData.paulinePrayer2Start && formData.paulinePrayer2End)
+          ? `${formData.paulinePrayer2Start} - ${formData.paulinePrayer2End}`
+          : ' ';
+
+        const mainRow = {
+          pauline1,
+          pauline2,
+          action_plan: formData.actionPlan,
+          confession: planConfession || '',
+          date: new Date().toISOString(),
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+          main_member_id: user.id,
+          current_cohort_id: cohortNumericId,
+          plans_id: planData.id,
+        };
+        if (dayOrNight === 'D') {
+          mainRow.morning_meditation = formData.meditation;
+        } else {
+          mainRow.evening_meditation = formData.meditation;
+        }
+
+        const { error: insertMainError } = await supabase.from('main_plan_submissions').insert([mainRow]);
+        if (insertMainError) {
+          console.error('Error inserting main_plan_submissions:', insertMainError);
+          throw insertMainError;
+        }
+
+        const saNum = memberData?.sanumber || memberData?.satnumber || memberData?.sa_number || '';
+        submitPlanGoogleForm(saNum);
+        try {
+          const text = generateClipboardText();
+          await navigator.clipboard.writeText(text);
+        } catch (clipboardErr) {
+          console.error('Failed to copy to clipboard', clipboardErr);
+        }
+      }
+
       setSuccess(true);
-      // Removed automatic redirect, user must click the button to go to WhatsApp
     } catch (err) {
       console.error(err);
       alert('Error saving report. Please try again.');
@@ -250,6 +331,16 @@ ${formData.resourcesChecked ? '*Resources:* ✅' : '*Resources:* ❌'}
   };
 
   if (success) {
+    const mainGroup =
+      currentCohort?.mainGroupLink ||
+      currentCohort?.main_group_link ||
+      'https://chat.whatsapp.com/';
+    const tasterGroup =
+      currentCohort?.tasterGroupLink ||
+      currentCohort?.taster_group_link ||
+      'https://chat.whatsapp.com/';
+    const groupLink = isTaster ? tasterGroup : mainGroup;
+
     return (
       <div className="container flex-col flex-center animate-fade-in" style={{ minHeight: '80vh', textAlign: 'center', padding: '20px' }}>
         <div style={{ backgroundColor: 'rgba(57,210,192,0.1)', padding: '30px', borderRadius: '50%', marginBottom: '20px' }}>
@@ -257,20 +348,21 @@ ${formData.resourcesChecked ? '*Resources:* ✅' : '*Resources:* ❌'}
         </div>
         <h2 style={{ fontSize: '24px', fontWeight: 'bold' }}>Update</h2>
         <p style={{ marginTop: '10px', fontSize: '16px', lineHeight: '1.5', color: 'var(--text-primary)' }}>
-          Your Meditation has been Copied to Clipboard. <br />
-          Paste your meditation when you get to the main WhatsApp group page!
+          Your report was saved and sent to the Google Form. Your meditation summary was copied to the clipboard. <br />
+          {isTaster
+            ? 'Open your taster WhatsApp group and paste your meditation there.'
+            : 'Open your main adventure WhatsApp group and paste your meditation there.'}
         </p>
-        
-        <button 
+
+        <button
           className="btn btn-primary"
           style={{ width: '100%', maxWidth: '300px', padding: '16px', borderRadius: '16px', fontSize: '16px', fontWeight: 'bold', marginTop: '30px', boxShadow: '0 8px 16px rgba(125,17,17,0.2)' }}
           onClick={() => {
-            const groupLink = currentCohort?.tasterGroupLink || currentCohort?.taster_group_link || 'https://chat.whatsapp.com/';
             window.open(groupLink, '_blank', 'noopener,noreferrer');
             navigate('/history');
           }}
         >
-          Open Form & Continue
+          {isTaster ? 'Open Taster Group & Continue' : 'Open Main Group & Continue'}
         </button>
       </div>
     );
@@ -292,12 +384,14 @@ ${formData.resourcesChecked ? '*Resources:* ✅' : '*Resources:* ❌'}
           <ArrowLeft size={20} />
         </button>
         <div>
-          <h2 style={{ fontSize: '22px', margin: 0, fontWeight: '700', color: 'var(--text-primary)' }}>Adventure Report (Taster)</h2>
+          <h2 style={{ fontSize: '22px', margin: 0, fontWeight: '700', color: 'var(--text-primary)' }}>
+            {isTaster ? 'Adventure Report (Taster)' : 'Adventure Report (Main)'}
+          </h2>
           <p style={{ margin: 0, fontSize: '13px', color: 'var(--text-primary)' }}>Document your daily reading</p>
         </div>
       </div>
 
-      {/* Today's plan: Confession & Resource links (from plans_taster, same as Home) */}
+      {/* Today's plan: Confession & Resource links (same as Home) */}
       {planData && (
         <div className="flex-col" style={{ padding: '20px', gap: '16px', borderRadius: '20px', marginBottom: '24px', backgroundColor: '#FFFBF9', border: '1px solid rgba(125,17,17,0.2)', boxShadow: '0 2px 8px rgba(125,17,17,0.06)' }}>
           <h3 style={{ fontSize: '16px', fontWeight: '700', color: 'var(--text-primary)', margin: 0 }}>Today&apos;s plan</h3>

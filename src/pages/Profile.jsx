@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useAppStore } from '../store/appStore';
 import { useNavigate } from 'react-router-dom';
-import { LogOut, HelpCircle, ShieldAlert, Award, FileText, Clock, BookOpen, Phone, Mail } from 'lucide-react';
+import { LogOut, HelpCircle, ShieldAlert, Clock, BookOpen, Phone, Mail, User, Hash } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 
 export default function Profile() {
@@ -12,51 +12,77 @@ export default function Profile() {
     setCurrentCohortId,
     setLoggedIn,
     setTasterOnboardingDone,
-    userDataCohortMember,
   } = useAppStore();
   const navigate = useNavigate();
 
   const [tasterMember, setTasterMember] = useState(null);
+  const [mainMember, setMainMember] = useState(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const loadTasterMember = async () => {
-      if (!tasterOnboardingDone || !tasterEmail) {
-        setLoading(false);
-        return;
-      }
+    let cancelled = false;
+
+    const loadProfile = async () => {
+      setLoading(true);
       try {
-        const cohortId = currentCohortId;
-        let data = null;
-        if (cohortId) {
-          const { data: byCohort, error } = await supabase
-            .from('taster_members')
-            .select('*')
-            .eq('email', tasterEmail)
-            .eq('current_cohort_id', cohortId)
-            .maybeSingle();
-          if (error) console.error('Error loading taster profile (cohort):', error);
-          data = byCohort;
-        } else {
-          const { data: rows, error } = await supabase
-            .from('taster_members')
-            .select('*')
-            .eq('email', tasterEmail)
-            .limit(1);
-          if (error) console.error('Error loading taster profile:', error);
-          data = rows?.[0] ?? null;
-        }
-        if (data) {
-          setTasterMember(data);
-          if (data.current_cohort_id != null) {
-            setCurrentCohortId(String(data.current_cohort_id));
+        if (tasterOnboardingDone) {
+          setMainMember(null);
+          if (!tasterEmail) {
+            setTasterMember(null);
+            return;
           }
+          const cohortId = currentCohortId;
+          let data = null;
+          if (cohortId) {
+            const { data: byCohort, error } = await supabase
+              .from('taster_members')
+              .select('*')
+              .eq('email', tasterEmail)
+              .eq('current_cohort_id', cohortId)
+              .maybeSingle();
+            if (error) console.error('Error loading taster profile (cohort):', error);
+            data = byCohort;
+          } else {
+            const { data: rows, error } = await supabase
+              .from('taster_members')
+              .select('*')
+              .eq('email', tasterEmail)
+              .limit(1);
+            if (error) console.error('Error loading taster profile:', error);
+            data = rows?.[0] ?? null;
+          }
+          if (!cancelled && data) {
+            setTasterMember(data);
+            if (data.current_cohort_id != null) {
+              setCurrentCohortId(String(data.current_cohort_id));
+            }
+          } else if (!cancelled) {
+            setTasterMember(null);
+          }
+        } else {
+          setTasterMember(null);
+          const { data: { user } } = await supabase.auth.getUser();
+          if (!user?.email || cancelled) {
+            setMainMember(null);
+            return;
+          }
+          const { data, error } = await supabase
+            .from('main_members')
+            .select('*')
+            .eq('email', user.email)
+            .maybeSingle();
+          if (error) console.error('Error loading main profile:', error);
+          if (!cancelled) setMainMember(data ?? null);
         }
       } finally {
-        setLoading(false);
+        if (!cancelled) setLoading(false);
       }
     };
-    loadTasterMember();
+
+    loadProfile();
+    return () => {
+      cancelled = true;
+    };
   }, [tasterOnboardingDone, tasterEmail, currentCohortId, setCurrentCohortId]);
 
   const handleLogout = async () => {
@@ -77,8 +103,28 @@ export default function Profile() {
 
   const isTaster = tasterOnboardingDone;
 
-  // Main member data (from cohort member state)
-  const mainMember = !isTaster ? userDataCohortMember : null;
+  const formatMainValue = (val) => {
+    if (val == null || val === '') return '—';
+    if (Array.isArray(val)) return val.length ? val.join(', ') : '—';
+    if (typeof val === 'boolean') return val ? 'Yes' : 'No';
+    return String(val);
+  };
+
+  const MainFieldRow = ({ label, value }) => (
+    <div
+      style={{
+        display: 'flex',
+        justifyContent: 'space-between',
+        alignItems: 'flex-start',
+        gap: 12,
+        padding: '10px 0',
+        borderBottom: '1px solid rgba(15,23,42,0.08)',
+      }}
+    >
+      <span style={{ fontSize: 13, color: 'var(--text-secondary)', flexShrink: 0 }}>{label}</span>
+      <span style={{ fontSize: 14, fontWeight: 600, textAlign: 'right', wordBreak: 'break-word' }}>{formatMainValue(value)}</span>
+    </div>
+  );
 
   const renderTasterProfile = () => {
     const member = tasterMember;
@@ -297,14 +343,42 @@ export default function Profile() {
   };
 
   const renderMainProfile = () => {
-    const member = mainMember;
-    // If we don't have main member details, show a very simple fallback
-    const fallbackEmail = tasterEmail || 'Member';
-    const initials =
-      (member?.firstName?.charAt(0) || member?.firstname?.charAt(0) || fallbackEmail.charAt(0) || 'M').toUpperCase();
-    const fullName =
-      `${member?.firstName || member?.firstname || ''} ${member?.lastName || member?.lastname || ''}`.trim() ||
-      fallbackEmail;
+    const m = mainMember;
+    const initials = m
+      ? (`${m.firstname?.charAt(0) || ''}${m.lastname?.charAt(0) || ''}` || (m.email?.charAt(0) || 'M')).toUpperCase()
+      : 'M';
+    const fullName = m
+      ? `${m.firstname || ''} ${m.lastname || ''}`.trim() || m.email || 'Member'
+      : 'Member';
+
+    const mainCard = (title, icon, children) => (
+      <div
+        style={{
+          backgroundColor: '#FFFFFF',
+          borderRadius: 20,
+          padding: '14px 16px',
+          marginBottom: 14,
+          boxShadow: '0 8px 18px rgba(15,23,42,0.05)',
+        }}
+      >
+        <p
+          style={{
+            margin: '0 0 10px',
+            fontSize: 12,
+            color: 'var(--text-secondary)',
+            textTransform: 'uppercase',
+            letterSpacing: '0.08em',
+            display: 'flex',
+            alignItems: 'center',
+            gap: 8,
+          }}
+        >
+          {icon}
+          {title}
+        </p>
+        {children}
+      </div>
+    );
 
     return (
       <div
@@ -374,50 +448,72 @@ export default function Profile() {
         </div>
 
         <div style={{ padding: '20px 16px 32px', marginTop: -14 }}>
-          {/* Quick actions */}
-          <div
-            style={{
-              backgroundColor: '#FFFFFF',
-              borderRadius: 24,
-              padding: '16px 18px',
-              marginBottom: 18,
-              boxShadow: '0 10px 25px rgba(15,23,42,0.08)',
-              display: 'flex',
-              flexDirection: 'column',
-              gap: 10,
-            }}
-          >
-            <button
-              className="btn btn-secondary"
-              style={{
-                width: '100%',
-                padding: '12px',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                gap: 8,
-              }}
-              onClick={() => navigate('/adventure-report')}
+          {!m ? (
+            <div
+              className="glass-card"
+              style={{ padding: '20px', marginBottom: 18, textAlign: 'center', borderRadius: 20 }}
             >
-              <Award size={18} />
-              Adventure Report
-            </button>
-            <button
-              className="btn btn-secondary"
-              style={{
-                width: '100%',
-                padding: '12px',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                gap: 8,
-              }}
-              onClick={() => navigate('/sermon-report')}
-            >
-              <FileText size={18} />
-              Sermon Report
-            </button>
-          </div>
+              <p style={{ margin: 0, color: 'var(--text-secondary)', lineHeight: 1.55, fontSize: 15 }}>
+                We couldn&apos;t load your details from the member list. If this keeps happening, contact support.
+              </p>
+            </div>
+          ) : (
+            <>
+              {mainCard(
+                'Identity',
+                <User size={16} color="var(--primary)" />,
+                <>
+                  <MainFieldRow label="First name" value={m.firstname} />
+                  <MainFieldRow label="Last name" value={m.lastname} />
+                  <MainFieldRow label="Email" value={m.email} />
+                  <MainFieldRow label="SA number" value={m.sanumber} />
+                  <MainFieldRow label="Member ID" value={m.id} />
+                </>
+              )}
+              {mainCard(
+                'Contact',
+                <Phone size={16} color="var(--primary)" />,
+                <>
+                  <MainFieldRow label="Phone" value={m.phonenumber} />
+                  <MainFieldRow label="WhatsApp" value={m.whatsapp} />
+                </>
+              )}
+              {mainCard(
+                'Cohort & program',
+                <Hash size={16} color="var(--primary)" />,
+                <>
+                  <MainFieldRow label="Current cohort ID" value={m.current_cohort_id} />
+                  <MainFieldRow label="In current cohort" value={m.isincurrentcohort} />
+                  <MainFieldRow label="Status" value={m.status} />
+                  <MainFieldRow label="Role" value={m.role} />
+                  <MainFieldRow label="Circle number" value={m.circle_number} />
+                  <MainFieldRow label="Plan created" value={m.plancreated} />
+                  <MainFieldRow label="Probation visits" value={m.probationvisits} />
+                </>
+              )}
+              {mainCard(
+                'Accountability',
+                <Hash size={16} color="var(--primary)" />,
+                <>
+                  <MainFieldRow label="Partner ID" value={m.partnerid} />
+                  <MainFieldRow label="Rep ID" value={m.repid} />
+                </>
+              )}
+              {mainCard(
+                'Bio',
+                <User size={16} color="var(--primary)" />,
+                <p style={{ margin: 0, fontSize: 14, lineHeight: 1.55, fontWeight: 500 }}>{formatMainValue(m.bio)}</p>
+              )}
+              {mainCard(
+                'History',
+                <Hash size={16} color="var(--primary)" />,
+                <>
+                  <MainFieldRow label="Previous SA numbers" value={m.prevsanumbers} />
+                  <MainFieldRow label="Previous groups" value={m.previousgroups} />
+                </>
+              )}
+            </>
+          )}
 
           {/* Support & legal */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>

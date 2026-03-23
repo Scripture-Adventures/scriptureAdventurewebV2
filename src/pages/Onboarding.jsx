@@ -2,6 +2,9 @@ import React, { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
 import { useAppStore } from '../store/appStore';
 import { useNavigate } from 'react-router-dom';
+import { MessageCircle, Mail, Eye, EyeOff } from 'lucide-react';
+import { ADMIN_WHATSAPP_URL, SUPPORT_EMAIL } from '../lib/config';
+import { verifyMainMemberForCohort, isDevTestMainEmail } from '../lib/mainMemberQualification';
 
 export default function Onboarding() {
   const [currentSlide, setCurrentSlide] = useState(0);
@@ -10,6 +13,7 @@ export default function Onboarding() {
   // Auth states
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   
@@ -18,6 +22,8 @@ export default function Onboarding() {
   const [selectedCohort, setSelectedCohort] = useState('');
   const [tasterCohorts, setTasterCohorts] = useState([]);
   const [selectedTasterCohort, setSelectedTasterCohort] = useState('');
+
+  const [notQualifiedDialog, setNotQualifiedDialog] = useState({ open: false, reason: null });
   
   const setLoggedIn = useAppStore(state => state.setLoggedIn);
   const navigate = useNavigate();
@@ -42,7 +48,7 @@ export default function Onboarding() {
     async function fetchCohorts() {
       const { data } = await supabase
         .from('current_cohort')
-        .select('id, nomenclature, taster_session_on, taster_group_link, sermon_link, taster_start_date, start_date');
+        .select('id, nomenclature, taster_session_on, taster_group_link, sermon_link, taster_start_date, start_date, main_group_link');
       if (data) {
         setCohorts(data);
         setTasterCohorts(data.filter(c => c.taster_session_on === true));
@@ -50,6 +56,52 @@ export default function Onboarding() {
     }
     fetchCohorts();
   }, []);
+
+  useEffect(() => {
+    const raw = sessionStorage.getItem('sa_main_not_qualified');
+    if (!raw) return;
+    sessionStorage.removeItem('sa_main_not_qualified');
+    const reason =
+      raw === 'wrong_cohort'
+        ? 'wrong_cohort'
+        : raw === 'no_member'
+          ? 'no_member'
+          : raw === 'fetch_error'
+            ? 'fetch_error'
+            : 'not_in_cohort';
+    setNotQualifiedDialog({ open: true, reason });
+    setStep(1);
+  }, []);
+
+  const notQualifiedCopy = (() => {
+    const r = notQualifiedDialog.reason;
+    if (r === 'wrong_cohort') {
+      return {
+        title: 'Cohort mismatch',
+        body:
+          'The cohort you selected does not match your assigned cohort. Please choose the cohort you were placed in, or complete the steps to join this cohort.',
+      };
+    }
+    if (r === 'no_member') {
+      return {
+        title: 'No membership found',
+        body:
+          'We could not find your details in our main member list. You are not able to access the main adventure until your account is set up.',
+      };
+    }
+    if (r === 'fetch_error') {
+      return {
+        title: 'Could not verify membership',
+        body:
+          'We could not confirm your membership status. Check your connection and try again, or contact the admins for help.',
+      };
+    }
+    return {
+      title: 'Not qualified for this cohort',
+      body:
+        'Your account is not marked as active in the current cohort. Complete whatever is required to qualify, or message the admins on WhatsApp for assistance.',
+    };
+  })();
 
   const handleLogin = async (e) => {
     e.preventDefault();
@@ -63,16 +115,35 @@ export default function Onboarding() {
       const { data, error: authError } = await supabase.auth.signInWithPassword({ email, password });
       if (authError) throw authError;
 
-      useAppStore.getState().setTasterEmail(data.user?.email || email);
+      const userEmail = data.user?.email || email;
+
+      if (!isDevTestMainEmail(userEmail)) {
+        const check = await verifyMainMemberForCohort(supabase, userEmail, selectedCohort);
+        if (!check.ok) {
+          await supabase.auth.signOut();
+          setNotQualifiedDialog({ open: true, reason: check.reason });
+          return;
+        }
+      }
+
+      useAppStore.getState().setTasterEmail(userEmail);
       useAppStore.getState().setCurrentCohortId(selectedCohort);
+      const cohortObj = cohorts.find((c) => String(c.id) === String(selectedCohort));
+      if (cohortObj) {
+        useAppStore.getState().setCurrentCohort(cohortObj);
+      }
       setLoggedIn(true);
       navigate('/');
     } catch (err) {
       console.warn("Supabase Error:", err.message);
-      if (email === "test@test.com" || email === "admin@scripture.com") {
+      if (isDevTestMainEmail(email)) {
         setLoggedIn(true);
         useAppStore.getState().setTasterEmail(email);
         useAppStore.getState().setCurrentCohortId(selectedCohort);
+        const cohortObj = cohorts.find((c) => String(c.id) === String(selectedCohort));
+        if (cohortObj) {
+          useAppStore.getState().setCurrentCohort(cohortObj);
+        }
         navigate('/');
       } else {
         setError(err.message);
@@ -100,6 +171,105 @@ export default function Onboarding() {
 
   return (
     <div style={{ position: 'relative', width: '100%', minHeight: '100vh', overflow: 'hidden', backgroundColor: '#000' }}>
+      {notQualifiedDialog.open && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="not-qualified-title"
+          style={{
+            position: 'fixed',
+            inset: 0,
+            zIndex: 9999,
+            background: 'rgba(0,0,0,0.7)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: '24px',
+          }}
+          onClick={() => setNotQualifiedDialog({ open: false, reason: null })}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              background: 'var(--surface-elevated, #fff)',
+              borderRadius: '20px',
+              padding: '24px',
+              maxWidth: '420px',
+              width: '100%',
+              boxShadow: '0 24px 64px rgba(0,0,0,0.35)',
+              border: '1px solid rgba(125,17,17,0.12)',
+            }}
+          >
+            <h3
+              id="not-qualified-title"
+              style={{ margin: '0 0 12px', fontSize: '20px', fontWeight: '800', color: 'var(--primary)' }}
+            >
+              {notQualifiedCopy.title}
+            </h3>
+            <p style={{ margin: '0 0 20px', fontSize: '15px', lineHeight: 1.55, color: 'var(--text-secondary)' }}>
+              {notQualifiedCopy.body}
+            </p>
+            <div className="flex-col" style={{ gap: '10px' }}>
+              {ADMIN_WHATSAPP_URL ? (
+                <a
+                  href={ADMIN_WHATSAPP_URL}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="btn btn-primary flex-center"
+                  style={{
+                    width: '100%',
+                    padding: '14px',
+                    borderRadius: '12px',
+                    textDecoration: 'none',
+                    gap: '8px',
+                    fontWeight: '700',
+                  }}
+                >
+                  <MessageCircle size={20} />
+                  Message admins on WhatsApp
+                </a>
+              ) : (
+                <p style={{ margin: 0, fontSize: '13px', color: 'var(--text-muted)' }}>
+                  Ask your facilitator for the admin WhatsApp number, or email support below.
+                </p>
+              )}
+              <a
+                href={`mailto:${SUPPORT_EMAIL}?subject=${encodeURIComponent('Main member cohort access')}`}
+                className="btn flex-center"
+                style={{
+                  width: '100%',
+                  padding: '14px',
+                  borderRadius: '12px',
+                  textDecoration: 'none',
+                  gap: '8px',
+                  fontWeight: '600',
+                  background: 'rgba(125,17,17,0.08)',
+                  color: 'var(--primary)',
+                  border: '1px solid rgba(125,17,17,0.2)',
+                }}
+              >
+                <Mail size={20} />
+                Email support
+              </a>
+              <button
+                type="button"
+                className="btn"
+                style={{
+                  width: '100%',
+                  padding: '12px',
+                  background: 'transparent',
+                  color: 'var(--text-muted)',
+                  border: 'none',
+                  fontWeight: '600',
+                }}
+                onClick={() => setNotQualifiedDialog({ open: false, reason: null })}
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       {/* Background Slideshow */}
       {slides.map((src, index) => (
         <img 
@@ -235,15 +405,47 @@ export default function Onboarding() {
 
                 <div>
                   <label style={{ display: 'block', color: 'var(--text-secondary)', fontSize: '14px', fontWeight: '500', marginBottom: '8px' }}>Password</label>
-                  <input 
-                    type="password" 
-                    placeholder="Enter your password" 
-                    className="input-field" 
-                    style={{ borderRadius: '12px', padding: '16px', backgroundColor: 'var(--surface-elevated)', border: '1px solid rgba(0,0,0,0.05)' }} 
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    required
-                  />
+                  <div style={{ position: 'relative' }}>
+                    <input
+                      type={showPassword ? 'text' : 'password'}
+                      placeholder="Enter your password"
+                      className="input-field"
+                      style={{
+                        borderRadius: '12px',
+                        padding: '16px',
+                        paddingRight: '52px',
+                        width: '100%',
+                        boxSizing: 'border-box',
+                        backgroundColor: 'var(--surface-elevated)',
+                        border: '1px solid rgba(0,0,0,0.05)',
+                      }}
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      required
+                      autoComplete="current-password"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowPassword((v) => !v)}
+                      aria-label={showPassword ? 'Hide password' : 'Show password'}
+                      style={{
+                        position: 'absolute',
+                        right: '12px',
+                        top: '50%',
+                        transform: 'translateY(-50%)',
+                        background: 'none',
+                        border: 'none',
+                        padding: '8px',
+                        cursor: 'pointer',
+                        color: 'var(--text-muted)',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                      }}
+                    >
+                      {showPassword ? <EyeOff size={20} /> : <Eye size={20} />}
+                    </button>
+                  </div>
                 </div>
 
                 <div>
@@ -261,8 +463,8 @@ export default function Onboarding() {
                       }}
                     >
                       <option value="">Select a cohort...</option>
-                      {cohorts.map((c, i) => (
-                        <option key={i} value={c.nomenclature}>{c.nomenclature}</option>
+                      {cohorts.map((c) => (
+                        <option key={c.id} value={String(c.id)}>{c.nomenclature}</option>
                       ))}
                     </select>
                     <div style={{ position: 'absolute', right: '16px', top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none', color: 'var(--text-muted)' }}>

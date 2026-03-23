@@ -1,13 +1,14 @@
 import React, { useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase';
-import { useAppStore } from '../store/appStore';
 import { Loader, Edit3, Target } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
+import { isWeeklyGoalSettingAllowed, weeklyGoalWindowMessage } from '../lib/weeklyGoalWindow';
 
 export default function TrackGoal() {
   const [goal, setGoal] = useState(null);
   const [loading, setLoading] = useState(true);
   const navigate = useNavigate();
+  const canSetWeeklyGoals = isWeeklyGoalSettingAllowed();
 
   useEffect(() => {
     const fetchGoal = async () => {
@@ -82,10 +83,28 @@ export default function TrackGoal() {
         </div>
       )}
 
-      <button 
-        className="btn btn-primary" 
-        style={{ width: '100%', marginTop: '30px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}
-        onClick={() => navigate('/goal-setting')}
+      {!canSetWeeklyGoals && (
+        <p style={{ marginTop: '20px', fontSize: '14px', lineHeight: 1.5, color: 'var(--text-secondary)', textAlign: 'center', padding: '12px', background: 'rgba(125,17,17,0.06)', borderRadius: '12px' }}>
+          {weeklyGoalWindowMessage()}
+        </p>
+      )}
+      <button
+        type="button"
+        className="btn btn-primary"
+        style={{
+          width: '100%',
+          marginTop: '16px',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          gap: '8px',
+          opacity: canSetWeeklyGoals ? 1 : 0.55,
+          cursor: canSetWeeklyGoals ? 'pointer' : 'not-allowed',
+        }}
+        disabled={!canSetWeeklyGoals}
+        onClick={() => {
+          if (canSetWeeklyGoals) navigate('/goal-setting');
+        }}
       >
         <Edit3 size={18} /> Set Weekly Goals
       </button>

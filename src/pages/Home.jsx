@@ -38,9 +38,34 @@ export default function Home() {
   const [planData, setPlanData] = useState(null);
   const [loading, setLoading] = useState(true);
 
-  const { currentCohort, currentCohortId, userDataCohortMember, setLoggedIn, tasterDetails, setTasterDetails } = useAppStore();
+  const { currentCohort, currentCohortId, userDataCohortMember, setLoggedIn, tasterDetails, setTasterDetails, setCurrentCohort } = useAppStore();
   const navigate = useNavigate();
   const greeting = getGreetingInfo();
+
+  // Main members: ensure cohort row has start_date + main_group_link (handles legacy persisted state)
+  useEffect(() => {
+    const hydrateCohort = async () => {
+      if (useAppStore.getState().tasterOnboardingDone) return;
+      const { currentCohortId: cid, currentCohort: co } = useAppStore.getState();
+      if (!cid) return;
+      const hasStart = co?.start_date != null || co?.startDate != null;
+      const hasMainLink = co?.main_group_link != null || co?.mainGroupLink != null;
+      if (co?.id != null && hasStart && hasMainLink) return;
+
+      const n = parseInt(String(cid), 10);
+      const byNumericId = !Number.isNaN(n) && String(n) === String(cid).trim();
+      let row = null;
+      if (byNumericId) {
+        const { data } = await supabase.from('current_cohort').select('*').eq('id', n).maybeSingle();
+        row = data;
+      } else {
+        const { data } = await supabase.from('current_cohort').select('*').eq('nomenclature', cid).maybeSingle();
+        row = data;
+      }
+      if (row) setCurrentCohort(row);
+    };
+    hydrateCohort();
+  }, [currentCohortId, setCurrentCohort]);
 
   useEffect(() => {
     // In a real app, we use supabase.auth.getUser(), but we'll simulate the data fetching
@@ -101,12 +126,12 @@ export default function Home() {
             .maybeSingle();
           if (planRow) setPlanData(planRow);
         } else {
-          const { data: plans } = await supabase
+          const { data: planRow } = await supabase
             .from('plans_main_adventure')
             .select('*')
-            .order('date', { ascending: false })
-            .limit(1);
-          if (plans && plans.length > 0) setPlanData(plans[0]);
+            .eq('date', todayStr)
+            .maybeSingle();
+          if (planRow) setPlanData(planRow);
         }
       } catch (error) {
         console.error("Error fetching data:", error);
@@ -169,10 +194,15 @@ export default function Home() {
         ) : (
           <>
             <h3 style={{ fontSize: '18px', color: 'var(--text-secondary)' }}>
-              {currentCohort?.nomenclature || 'Current Cohort'}
+              Cohort {currentCohort?.id ?? (Number.isFinite(Number(currentCohortId)) ? Number(currentCohortId) : '—')}
             </h3>
             <p className="text-muted" style={{ fontSize: '14px', marginTop: '5px' }}>
-              {getFormattedDate()} ( Day {currentCohort?.startDate ? 'X' : '0'} )
+              {(() => {
+                const dayCount = getDayCountFromStartDate(
+                  currentCohort?.start_date || currentCohort?.startDate
+                );
+                return `${getFormattedDate()} ( Day ${dayCount ?? '—'} )`;
+              })()}
             </p>
           </>
         )}
@@ -372,12 +402,47 @@ export default function Home() {
                 </p>
               </div>
               
-              {planData?.resource1 && (
-                <button className="btn btn-secondary" style={{ width: '100%', marginTop: '10px', backgroundColor: 'rgba(255,255,255,0.1)', color: 'white', border: 'none' }}>
-                  View Resources
-                </button>
-              )}
             </div>
+          </div>
+
+          <div style={{ marginTop: '16px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
+            {(planData?.resource1 || planData?.resource2 || planData?.resource3) && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                <h3 style={{ fontSize: '16px', fontWeight: 'bold', color: 'var(--text-secondary)' }}>Resources</h3>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+                  {[planData?.resource1, planData?.resource2, planData?.resource3].map((res, index) => {
+                    if (!res) return null;
+                    return (
+                      <button
+                        key={index}
+                        type="button"
+                        onClick={() => window.open(res, '_blank')}
+                        className="glass-card flex-center"
+                        style={{ padding: '8px 16px', gap: '6px', border: '1px solid var(--primary)', borderRadius: '24px', backgroundColor: 'rgba(125,17,17,0.08)' }}
+                      >
+                        <ExternalLink color="var(--primary)" size={14} />
+                        <span style={{ fontSize: '13px', fontWeight: 'bold', color: 'var(--primary)' }}>Read Resource {index + 1}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            <button
+              type="button"
+              onClick={() => navigate('/adventure-report')}
+              className="glass-card"
+              style={{ padding: '16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', border: 'none', borderRadius: '16px', background: 'linear-gradient(135deg, rgba(125,17,17,0.1) 0%, rgba(125,17,17,0.02) 100%)', boxShadow: 'inset 0 1px 3px rgba(255,255,255,0.5), 0 4px 6px rgba(0,0,0,0.02)' }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+                <div style={{ backgroundColor: 'var(--primary)', padding: '10px', borderRadius: '12px', boxShadow: '0 4px 10px rgba(125,17,17,0.3)' }}>
+                  <ClipboardList color="white" size={24} />
+                </div>
+                <span style={{ fontSize: '16px', fontWeight: '700', color: 'var(--text-primary)' }}>Submit Adventure Plan Report</span>
+              </div>
+              <ChevronRight color="var(--primary)" size={20} />
+            </button>
           </div>
         </>
       )}
