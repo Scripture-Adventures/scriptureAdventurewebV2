@@ -14,19 +14,27 @@ export default function TrackGoal() {
     const fetchGoal = async () => {
       try {
         const { data: { user } } = await supabase.auth.getUser();
-        if (user) {
-          // Fetch the most recent goal submission for simplicity
-          const { data } = await supabase
-            .from('goal_submissions')
-            .select('*')
-            .order('created_at', { ascending: false })
-            .limit(1)
-            .single();
-            
-          if (data) setGoal(data);
+        if (!user?.email) {
+          setGoal(null);
+          return;
         }
+        const { data: member } = await supabase
+          .from('main_members')
+          .select('sanumber')
+          .eq('email', user.email)
+          .maybeSingle();
+
+        let q = supabase.from('goal_submissions').select('*').order('created_at', { ascending: false }).limit(1);
+        if (member?.sanumber) {
+          q = q.eq('saNumber', member.sanumber);
+        }
+        const { data, error } = await q.maybeSingle();
+        if (error) {
+          console.error('Error fetching goal:', error);
+        }
+        if (data) setGoal(data);
       } catch (err) {
-        console.error("Error fetching goal:", err);
+        console.error('Error fetching goal:', err);
       } finally {
         setLoading(false);
       }
@@ -48,30 +56,39 @@ export default function TrackGoal() {
       ) : goal ? (
         <div className="flex-col" style={{ gap: '15px' }}>
           <h3 className="text-gradient">Goals for the week</h3>
-          
+          {(goal.week || goal.date) && (
+            <p className="text-muted" style={{ fontSize: '13px', margin: 0 }}>
+              {goal.week ? `Week ${goal.week}` : ''}
+              {goal.week && goal.date ? ' · ' : ''}
+              {goal.date || ''}
+            </p>
+          )}
+
           <div className="glass-card" style={{ padding: '15px' }}>
             <p className="text-muted" style={{ fontSize: '14px' }}>Prayer Goal</p>
-            <p style={{ fontWeight: 'bold' }}>{goal.prayerGoal || 'Empty'}</p>
+            <p style={{ fontWeight: 'bold' }}>{goal.prayer_goal ?? goal.prayerGoal ?? 'Empty'}</p>
           </div>
-          
+
           <div className="glass-card" style={{ padding: '15px' }}>
             <p className="text-muted" style={{ fontSize: '14px' }}>Bible Study Goal</p>
-            <p style={{ fontWeight: 'bold' }}>{goal.bibleStudyGoal || 'Empty'}</p>
+            <p style={{ fontWeight: 'bold' }}>{goal.bible_study_goal ?? goal.bibleStudyGoal ?? 'Empty'}</p>
           </div>
-          
+
           <div className="glass-card" style={{ padding: '15px' }}>
             <p className="text-muted" style={{ fontSize: '14px' }}>Evangelism</p>
-            <p style={{ fontWeight: 'bold' }}>{goal.evangelismGoal || 'Empty'}</p>
+            <p style={{ fontWeight: 'bold' }}>{goal.evangelism_goal ?? goal.evangelismGoal ?? 'Empty'}</p>
           </div>
-          
+
           <div className="glass-card" style={{ padding: '15px' }}>
             <p className="text-muted" style={{ fontSize: '14px' }}>Personal Goal</p>
-            <p style={{ fontWeight: 'bold' }}>{goal.personalGoal || 'Empty'}</p>
+            <p style={{ fontWeight: 'bold' }}>{goal.personal_goal ?? goal.personalGoal ?? 'Empty'}</p>
           </div>
-          
+
           <div className="glass-card" style={{ padding: '15px' }}>
             <p className="text-muted" style={{ fontSize: '14px' }}>Resources Consumption</p>
-            <p style={{ fontWeight: 'bold' }}>{goal.resourceConsumption || 'Empty'} of 6</p>
+            <p style={{ fontWeight: 'bold' }}>
+              {goal.resource_consumption ?? goal.resourceConsumption ?? 'Empty'} of 6
+            </p>
           </div>
         </div>
       ) : (
